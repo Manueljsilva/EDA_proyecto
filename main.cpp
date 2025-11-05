@@ -26,17 +26,6 @@ class DBfsh{
         // Mapeo: hash -> punto original (para recuperar datos originales)
         vector<pair<tuple<double,double>, tuple<double,double>>> hash_to_original;
 
-
-        vector<tuple<double,double>> funcionHash(vector<tuple<double,double>> punto){
-            // implementación de la función hash
-            vector <tuple<double,double>> proyecciones;
-            for(auto[x,y]: punto){
-                double h1 = a[0][0]*x + a[0][1]*y;
-                double h2 = a[1][0]*x + a[1][1]*y;
-                proyecciones.push_back({h1,h2});
-            }
-            return proyecciones;
-        }
         tuple<double,double> funcionHash(tuple<double,double> punto){
             // implementación de la función hash
             double x = get<0>(punto);
@@ -257,10 +246,4 @@ int main(){
 
     return 0;
 }
-
-
     
-
-    
-
-
