@@ -5,68 +5,116 @@
 #include <tuple>
 #include <cmath>
 #include <algorithm>
+#include <random>
 using namespace std;
-
-
-vector <vector <double>> a = {
-    {0.6, 0.8},
-    {0.3, -0.9}
-};
 // clase  
 class DBfsh{
     private:
-        int D = 2; // dimensiones
-        int L = 5; // numero de tablas hash
-        int K = 12; // numero de funciones hash 
-        double C = 1.5; // const de error
-        double w0 = 0; // ancho de la ventana
-        int t = 1; // parámetro t (entero positivo)
+        int D;      // Dimensión original (ej: 2, 10, 128)
+        int K;      // Número de funciones hash = dimensión proyectada (siempre 2 para R*-tree 2D)
+        int L;      // Número de tablas hash
+        double C;   // Constante de aproximación
+        double w0;  // Ancho de ventana base
+        int t;      // Parámetro t (entero positivo)
+        unsigned seed; // Semilla para reproducibilidad
+        
         RStarTreeIndex indice;
         
-        // Mapeo: hash -> punto original (para recuperar datos originales)
-        vector<pair<tuple<double,double>, tuple<double,double>>> hash_to_original;
+        // Almacena los puntos originales (índice del vector = id del punto)
+        vector<vector<double>> datos;
 
-        tuple<double,double> funcionHash(tuple<double,double> punto){
-            // implementación de la función hash
-            double x = get<0>(punto);
-            double y = get<1>(punto);
-            double h1 = a[0][0]*x + a[0][1]*y;
-            double h2 = a[1][0]*x + a[1][1]*y;
-            return {h1,h2};
+        // Matriz de proyección: K filas × D columnas
+        // a[i][j] = coeficiente de la función hash i para la dimensión j
+        vector<vector<double>> a;
+
+        // Generar funciones hash aleatorias normalizadas
+        void generarFuncionesHash() {
+            a.resize(K);
+            mt19937 gen(seed);
+            normal_distribution<double> dist(0.0, 1.0);
+            
+            for(int i = 0; i < K; i++) {
+                a[i].resize(D);
+                double norm = 0.0;
+                
+                // Generar vector aleatorio N(0,1)
+                for(int j = 0; j < D; j++) {
+                    a[i][j] = dist(gen);
+                    norm += a[i][j] * a[i][j];
+                }
+                
+                // Normalizar ||a[i]|| = 1
+                norm = sqrt(norm);
+                for(int j = 0; j < D; j++) {
+                    a[i][j] /= norm;
+                }
+            }
         }
-        // distancia euclidiana
-        double distanciaEuclidiana(tuple<double,double> p1, tuple<double,double> p2){
-            double dx = get<0>(p1) - get<0>(p2);
-            double dy = get<1>(p1) - get<1>(p2);
-            return sqrt(dx*dx + dy*dy);
+        
+        // Proyectar punto N-dimensional → K-dimensional (siempre K=2 para R*-tree)
+        tuple<double,double> funcionHash(const vector<double>& punto) {
+            if(punto.size() != D) {
+                throw runtime_error("Punto debe tener " + to_string(D) + " dimensiones");
+            }
+            
+            // h_i(p) = a[i] · p (producto punto)
+            double h1 = 0.0, h2 = 0.0;
+            
+            for(int j = 0; j < D; j++) {
+                h1 += a[0][j] * punto[j];
+                h2 += a[1][j] * punto[j];
+            }
+            
+            return {h1, h2};
+        }
+        
+        // Distancia euclidiana en espacio original N-dimensional
+        double distanciaEuclidiana(const vector<double>& p1, const vector<double>& p2) {
+            double sum = 0.0;
+            for(size_t i = 0; i < p1.size(); i++) {
+                double diff = p1[i] - p2[i];
+                sum += diff * diff;
+            }
+            return sqrt(sum);
         }
 
 
     public:
-        // constructor por defecto
-        DBfsh(){
-            w0 = 4*C*C;
+        // Constructor con parámetros (K siempre = 2 para R*-tree 2D)
+        DBfsh(int dim, int L_, double C_, int t_, unsigned seed_ = 42) 
+            : D(dim), K(2), L(L_), C(C_), w0(4*C_*C_), t(t_), seed(seed_) {
+            generarFuncionesHash();
+            
+            cout << "DB-LSH inicializado:" << endl;
+            cout << "  Dimensión original: " << D << "D" << endl;
+            cout << "  Dimensión proyectada: " << K << "D (fijo para R*-tree)" << endl;
+            cout << "  Tablas hash: " << L << endl;
+            cout << "  C = " << C << ", w0 = " << w0 << ", t = " << t << endl;
+            cout << "  Semilla: " << seed << endl;
         }
-        // constructor con parámetros
-        DBfsh(int dim, int L_, int K_, double C_ , int t_) : D(dim), L(L_), K(K_), C(C_), w0(4*C*C), t(t_) {}
 
-        void insertar(vector<tuple<double , double>> valor){
-            vector<tuple<double,double>> PuntosHash; 
-            hash_to_original.clear(); // Limpiar mapeo anterior
+        void insertar(const vector<vector<double>>& datos_input){
+            // Guardar datos originales
+            datos = datos_input;
             
-            for (auto punto : valor){
-                tuple<double,double> hash_punto = funcionHash(punto);
-                PuntosHash.push_back(hash_punto);
-                // Guardar mapeo: hash -> original
-                hash_to_original.push_back({hash_punto, punto});
+            cout << "\nInsertando " << datos.size() << " puntos de " << D << "D..." << endl;
+            
+            // Proyectar y guardar en R*-tree con ID = índice del vector
+            for (size_t i = 0; i < datos.size(); i++){
+                tuple<double,double> hash_punto = funcionHash(datos[i]);
+                int id = static_cast<int>(i);  // ID = índice en vector datos
+                indice.insertPrueba(id, hash_punto);
             }
             
-            cout << "Hashes generados:" << endl;
-            for (size_t i = 0; i < PuntosHash.size(); i++) {
-                cout << "Original: (" << get<0>(valor[i]) << ", " << get<1>(valor[i]) << ") -> "
-                     << "Hash: (" << get<0>(PuntosHash[i]) << ", " << get<1>(PuntosHash[i]) << ")\n";
+            cout << "Proyecciones generadas (primeros 5):" << endl;
+            for (size_t i = 0; i < min((size_t)5, datos.size()); i++) {
+                auto hash = funcionHash(datos[i]);
+                cout << "  Punto[" << i << "] " << D << "D -> Hash: (" 
+                     << get<0>(hash) << ", " << get<1>(hash) << ")" << endl;
             }
-            indice.loadPrueba(PuntosHash);
+            if(datos.size() > 5) {
+                cout << "  ... (" << (datos.size() - 5) << " más)" << endl;
+            }
             cout << endl;
         }
         void imprimir(){
@@ -77,14 +125,20 @@ class DBfsh{
         // Algorithm 1: (r,c)-NN Query
         // Input: q (query point), r (query radius), c (approximation ratio), t (positive integer)
         // Output: A point o or ∅
-        tuple<double,double> RC_NN(tuple<double,double> query, double r, double c){
+        vector<double> RC_NN(const vector<double>& query, double r, double c){
             int cnt = 0;
             
             cout << "\n--- (r,c)-NN Query ---" << endl;
-            cout << "Query: (" << get<0>(query) << ", " << get<1>(query) << ")" << endl;
+            cout << "Query " << D << "D: [";
+            for(size_t i = 0; i < min((size_t)5, query.size()); i++) {
+                cout << query[i];
+                if(i < min((size_t)4, query.size()-1)) cout << ", ";
+            }
+            if(query.size() > 5) cout << " ...";
+            cout << "]" << endl;
             cout << "r = " << r << ", c = " << c << ", t = " << t << ", L = " << L << endl;
             
-            // Calcular G_i(q) para cada tabla (en nuestro caso simplificado, solo 1 tabla)
+            // Calcular G_i(q) para cada tabla
             tuple<double,double> hash_query = funcionHash(query);
             cout << "Hash G(q) = (" << get<0>(hash_query) << ", " << get<1>(hash_query) << ")" << endl;
             
@@ -110,21 +164,14 @@ class DBfsh{
                 
                 // Procesar cada punto encontrado
                 for(const auto& res : resultados) {
-                    tuple<double,double> hash_candidato = {bg::get<0>(res.first), bg::get<1>(res.first)};
+                    // El R*-tree ya nos da el ID directamente en res.second
+                    int id = res.second;
                     
-                    // Buscar el punto original correspondiente a este hash
-                    tuple<double,double> punto_original = {0.0, 0.0};
-                    for(const auto& [hash, original] : hash_to_original) {
-                        if(abs(get<0>(hash) - get<0>(hash_candidato)) < 0.0001 && 
-                           abs(get<1>(hash) - get<1>(hash_candidato)) < 0.0001) {
-                            punto_original = original;
-                            break;
-                        }
-                    }
+                    // Recuperar punto original usando el ID (O(1))
+                    const vector<double>& punto_original = datos[id];
                     
                     cnt = cnt + 1;
-                    cout << "  Punto " << cnt << ": hash=(" << get<0>(hash_candidato) << ", " << get<1>(hash_candidato) << ")";
-                    cout << " -> original=(" << get<0>(punto_original) << ", " << get<1>(punto_original) << ")" << endl;
+                    cout << "  Punto " << cnt << ": id=" << id << endl;
                     
                     // if cnt = 2tL + 1 or ||q, o|| ≤ cr then return o;
                     double dist = distanciaEuclidiana(query, punto_original);
@@ -144,17 +191,23 @@ class DBfsh{
             
             // return ∅
             cout << "  ∅ No se encontró punto satisfactorio" << endl;
-            return {INFINITY, INFINITY}; // Representamos ∅ con infinito
+            return vector<double>(D, INFINITY); // Representamos ∅ con infinitos
         }
         
         // Algorithm 2: c-ANN Query
         // Input: q (query point), c (approximation ratio)
         // Output: A point o
-        tuple<double,double> C_ANN(tuple<double,double> query, double c){
+        vector<double> C_ANN(const vector<double>& query, double c){
             cout << "\n" << string(60, '=') << endl;
             cout << "c-ANN Query" << endl;
             cout << string(60, '=') << endl;
-            cout << "Query: (" << get<0>(query) << ", " << get<1>(query) << ")" << endl;
+            cout << "Query " << D << "D: [";
+            for(size_t i = 0; i < min((size_t)5, query.size()); i++) {
+                cout << query[i];
+                if(i < min((size_t)4, query.size()-1)) cout << ", ";
+            }
+            if(query.size() > 5) cout << " ...";
+            cout << "]" << endl;
             cout << "c = " << c << endl;
             
             double r = 1.0; // r ← 1
@@ -167,10 +220,10 @@ class DBfsh{
                 cout << "r = " << r << endl;
                 
                 // o ← call (r,c)-NN
-                tuple<double,double> o = RC_NN(query, r, c);
+                vector<double> o = RC_NN(query, r, c);
                 
                 // if o ≠ ∅ then return o
-                if(get<0>(o) != INFINITY) {
+                if(o[0] != INFINITY) {
                     cout << "\n✓ Punto encontrado!" << endl;
                     return o;
                 }
@@ -183,7 +236,7 @@ class DBfsh{
                 // Límite de seguridad
                 if(r > 1000.0) {
                     cout << "  ⚠ Alcanzado límite de expansión (r > 1000)" << endl;
-                    return {INFINITY, INFINITY};
+                    return vector<double>(D, INFINITY);
                 }
             }
         }
@@ -194,8 +247,14 @@ class DBfsh{
 
 
 int main(){
-    // dataset de dos dimenciones
-    vector<tuple<double, double>> datos = {
+    cout << "============================================================" << endl;
+    cout << "DB-LSH Dinámico: N-Dimensional → 2D (R*-tree)" << endl;
+    cout << "============================================================" << endl;
+    
+    // ============= EJEMPLO 1: 2D → 2D (caso base) =============
+    cout << "\n### EJEMPLO 1: Datos 2D → Hash 2D ###\n" << endl;
+    
+    vector<vector<double>> datos_2d = {
         {1.0, 1.0},
         {2.0, 2.0},
         {4.0, 2.0},
@@ -203,47 +262,107 @@ int main(){
         {7.0, 8.0}
     };
 
-    cout << "=====================================" << endl;
-    cout << "DB-LSH con (r,c)-NN y c-ANN Query" << endl;
-    cout << "=====================================" << endl;
-    cout << "Parámetros:" << endl;
-    cout << "  L = 1 (tablas hash)" << endl;
-    cout << "  K = 2 (funciones hash)" << endl;
-    cout << "  C = 1.5 (constante de error)" << endl;
-    cout << "  t = 1 (parámetro positivo)" << endl;
-    cout << "  w0 = 4*C^2 = 9.0" << endl;
-    cout << "=====================================" << endl;
+    DBfsh indice_2d(2, 1, 1.5, 1, 42);  // dim=2, L=1, C=1.5, t=1, seed=42
+    indice_2d.insertar(datos_2d);
+    indice_2d.imprimir();
 
-    DBfsh indice(2, 1, 2, 1.5, 1);
-    indice.insertar(datos);
-    indice.imprimir();
-
-    // Probar c-ANN Query (Algorithm 2)
-    cout << "\n" << string(60, '=') << endl;
-    cout << "PRUEBA DE c-ANN QUERY (Algorithm 2)" << endl;
-    cout << string(60, '=') << endl;
-    
-    tuple<double, double> query = {6.0, 6.0};
-    double c = 1.5;
-    
-    tuple<double,double> vecino = indice.C_ANN(query, c);
+    vector<double> query_2d = {6.0, 6.0};
+    vector<double> vecino_2d = indice_2d.C_ANN(query_2d, 1.5);
     
     cout << "\n" << string(60, '=') << endl;
-    cout << "RESULTADO FINAL:" << endl;
-    if(get<0>(vecino) != INFINITY) {
-        cout << "  Vecino más cercano (c-aproximado): (" 
-             << get<0>(vecino) << ", " << get<1>(vecino) << ")" << endl;
-        
-        // Calcular distancia real
-        double dx = get<0>(query) - get<0>(vecino);
-        double dy = get<1>(query) - get<1>(vecino);
-        double dist = sqrt(dx*dx + dy*dy);
-        cout << "  Distancia real: " << dist << endl;
+    cout << "RESULTADO:" << endl;
+    if(vecino_2d[0] != INFINITY) {
+        cout << "  Vecino encontrado: [";
+        for(size_t i = 0; i < vecino_2d.size(); i++) {
+            cout << vecino_2d[i];
+            if(i < vecino_2d.size()-1) cout << ", ";
+        }
+        cout << "]" << endl;
     } else {
         cout << "  No se encontró vecino" << endl;
     }
     cout << string(60, '=') << endl;
+    
+    
+    // ============= EJEMPLO 2: 5D → 2D =============
+    cout << "\n\n### EJEMPLO 2: Datos 5D → Hash 2D ###\n" << endl;
+    
+    vector<vector<double>> datos_5d = {
+        {1.0, 2.0, 3.0, 4.0, 5.0},
+        {2.0, 3.0, 4.0, 5.0, 6.0},
+        {5.0, 5.0, 5.0, 5.0, 5.0},
+        {10.0, 10.0, 10.0, 10.0, 10.0},
+        {1.5, 2.5, 3.5, 4.5, 5.5}
+    };
+    
+    DBfsh indice_5d(5, 1, 1.5, 1, 123);  // dim=5, L=1, C=1.5, t=1, seed=123
+    indice_5d.insertar(datos_5d);
+    indice_5d.imprimir();
+    
+    vector<double> query_5d = {1.2, 2.1, 3.2, 4.1, 5.1};
+    cout << "\nBuscando vecino cercano a query 5D..." << endl;
+    vector<double> vecino_5d = indice_5d.C_ANN(query_5d, 1.5);
+    
+    cout << "\n" << string(60, '=') << endl;
+    cout << "RESULTADO:" << endl;
+    if(vecino_5d[0] != INFINITY) {
+        cout << "  Vecino encontrado 5D: [";
+        for(size_t i = 0; i < vecino_5d.size(); i++) {
+            cout << vecino_5d[i];
+            if(i < vecino_5d.size()-1) cout << ", ";
+        }
+        cout << "]" << endl;
+        
+        // Calcular distancia real
+        double dist = 0.0;
+        for(size_t i = 0; i < query_5d.size(); i++) {
+            double diff = query_5d[i] - vecino_5d[i];
+            dist += diff * diff;
+        }
+        dist = sqrt(dist);
+        cout << "  Distancia euclidiana: " << dist << endl;
+    } else {
+        cout << "  No se encontró vecino" << endl;
+    }
+    cout << string(60, '=') << endl;
+    
+    
+    // ============= EJEMPLO 3: 10D → 2D =============
+    cout << "\n\n### EJEMPLO 3: Datos 10D → Hash 2D ###\n" << endl;
+    
+    vector<vector<double>> datos_10d;
+    // Generar 10 puntos aleatorios en 10D
+    for(int i = 0; i < 10; i++) {
+        vector<double> punto(10);
+        for(int j = 0; j < 10; j++) {
+            punto[j] = (i + 1) * (j + 1) * 0.5;
+        }
+        datos_10d.push_back(punto);
+    }
+    
+    DBfsh indice_10d(10, 1, 1.5, 1, 999);  // dim=10, L=1, C=1.5, t=1
+    indice_10d.insertar(datos_10d);
+    indice_10d.imprimir();
+    
+    vector<double> query_10d = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0};
+    cout << "\nBuscando vecino cercano en espacio 10D..." << endl;
+    vector<double> vecino_10d = indice_10d.C_ANN(query_10d, 2.0);
+    
+    cout << "\n" << string(60, '=') << endl;
+    cout << "RESULTADO:" << endl;
+    if(vecino_10d[0] != INFINITY) {
+        cout << "  Vecino encontrado 10D (primeras 5 dims): [";
+        for(size_t i = 0; i < min((size_t)5, vecino_10d.size()); i++) {
+            cout << vecino_10d[i];
+            if(i < 4) cout << ", ";
+        }
+        cout << " ...]" << endl;
+    } else {
+        cout << "  No se encontró vecino" << endl;
+    }
+    cout << string(60, '=') << endl;
+    
+    cout << "\n✨ Demostración completa: LSH funciona con N dimensiones ✨" << endl;
 
     return 0;
 }
-    
