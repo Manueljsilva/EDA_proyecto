@@ -13,8 +13,7 @@ namespace bgi = boost::geometry::index;
 
 class RStarTreeIndex {
 public:
-    // CAMBIAR EN CASO DE OTRO DATASET
-    using Point = bg::model::point<double, 2, bg::cs::cartesian>;
+    using Point = bg::model::point<double, 10, bg::cs::cartesian>;
     using Box = bg::model::box<Point>;
     using Value = pair<Point, int>; // par de punto y ID
     
@@ -27,11 +26,11 @@ public:
     // Constructor
     RStarTreeIndex();
 
-    void insertPrueba(int id , tuple<double,double> data);
-    bool loadPrueba(vector<tuple<double,double>> filepath);
+    void insertPrueba(int id , array<double,10> data);
+    bool loadPrueba(vector<array<double,10>> filepath);
 
-    // Window Query: buscar puntos dentro de un rectángulo
-    vector<Value> windowQuery(double x_min, double y_min, double x_max, double y_max) const;
+    // Window Query: buscar puntos dentro de un hiper-rectángulo 10D
+    vector<Value> windowQuery(const array<double,10>& mins, const array<double,10>& maxs) const;
     
     // Window Query alternativo: usando un Box directamente
     vector<Value> windowQuery(const Box& query_box) const;

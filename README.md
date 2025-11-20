@@ -1,6 +1,6 @@
-# DB-LSH N-Dimensional (V2) con R*-Tree
+# DB-LSH N-Dimensional (V3) con R*-Tree 10D
 
-Implementación de **DB-LSH** (Database-friendly Locality-Sensitive Hashing) siguiendo el paper original, con extensiones para **N dimensiones**. Utiliza **window queries dinámicas** sobre un R*-tree en lugar de buckets estáticos, permitiendo búsquedas aproximadas de vecinos más cercanos (c-ANN) eficientes.
+Implementación de **DB-LSH** (Database-friendly Locality-Sensitive Hashing) siguiendo el paper original, con extensiones para **N dimensiones** y proyección a **K=10 dimensiones**. Utiliza **window queries dinámicas** sobre un R*-tree 10D en lugar de buckets estáticos, permitiendo búsquedas aproximadas de vecinos más cercanos (c-ANN) eficientes en espacios de alta dimensionalidad.
 
 ## 📋 ¿Qué es DB-LSH?
 
@@ -10,11 +10,12 @@ Implementación de **DB-LSH** (Database-friendly Locality-Sensitive Hashing) sig
 
 | Característica | LSH clásico | DB-LSH (este proyecto) |
 |----------------|-------------|------------------------|
-| **Almacenamiento** | Buckets hash estáticos | R*-tree dinámico |
-| **Búsqueda** | Lookup directo en bucket | Window query expansiva |
-| **Colisiones** | Todos los puntos en bucket | Ventana `W(G(q), w₀·r)` |
+| **Almacenamiento** | Buckets hash estáticos | R*-tree 10D dinámico |
+| **Búsqueda** | Lookup directo en bucket | Window query 10D expansiva |
+| **Colisiones** | Todos los puntos en bucket | Ventana `W(G(q), w₀·r)` en 10D |
 | **Expansión** | Probar múltiples tablas L | Expandir radio `r ← c·r` |
-| **Indexación** | Hash tables | Índice espacial (R*-tree) |
+| **Indexación** | Hash tables | Índice espacial R*-tree 10D |
+| **Proyección** | Variable | N-D → 10D fijo |
 
 ### Ventajas de DB-LSH:
 
@@ -66,99 +67,6 @@ while TRUE do:
 
 **Idea clave**: Si no encuentra vecinos con radio `r`, **expande a `r ← c·r`** y repite.
 
-## 🔬 Implementación en este proyecto
-
-Esta versión extiende DB-LSH con soporte **N-dimensional** y optimizaciones de rendimiento:
-
-- **Proyecciones LSH**: Funciones hash `h_i(p) = a_i · p` con vectores `a_i ~ N(0,1)` normalizados
-- **N → 2D**: Reduce cualquier dimensión a 2D para indexar en R*-tree 2D de Boost
-- **Window queries**: Usa `windowQuery(x_min, y_min, x_max, y_max)` del R*-tree
-- **Verificación final**: Calcula distancia euclidiana real en espacio original (N-D)
-- **Acceso O(1)**: Optimización usando ID del R*-tree (no en el paper, mejora práctica)
-
-## ✨ Mejoras de V2 vs V1
-
-### ✅ **1. Soporte N-dimensional dinámico**
-
-```cpp
-// V1: Solo 2D fijo
-DBfsh indice_2d(2, 1, 2, 1.5, 1);
-
-// V2: Cualquier dimensión
-DBfsh indice_5d(5, 1, 1.5, 1);    // 5D → 2D
-DBfsh indice_10d(10, 1, 1.5, 1);  // 10D → 2D
-DBfsh indice_128d(128, 1, 1.5, 1); // 128D → 2D (SIFT)
-```
-
-### ✅ **2. Vectores hash aleatorios N(0,1)**
-
-**Antes (V1):** Hardcodeado
-```cpp
-vector<vector<double>> a = {{0.6, 0.8}, {0.3, -0.9}};  // Fijo
-```
-
-**Ahora (V2):** Generación aleatoria normalizada
-```cpp
-// Genera K vectores de D dimensiones ~ N(0,1), normalizados
-void generarFuncionesHash() {
-    mt19937 gen(seed);  // Reproducible
-    normal_distribution<double> dist(0.0, 1.0);
-    // ... normalización ||a[i]|| = 1
-}
-```
-
-### ✅ **3. Optimización O(1) para recuperación de datos**
-
-**❌ Antes (V1):** O(N) búsqueda lineal
-```cpp
-// Mapeo ineficiente
-vector<pair<tuple<double,double>, vector<double>>> hash_to_original;
-
-// Búsqueda O(N) comparando hashes con tolerancia
-for(const auto& [hash, original] : hash_to_original) {
-    if(abs(get<0>(hash) - get<0>(hash_candidato)) < 0.0001) {
-        punto_original = original;  // ¡60,000 comparaciones!
-    }
-}
-```
-
-**✅ Ahora (V2):** O(1) acceso directo
-```cpp
-// Vector simple (índice = id)
-vector<vector<double>> datos;
-
-// Inserción: usa índice como ID
-int id = static_cast<int>(i);
-indice.insertPrueba(id, hash_punto);
-
-// Recuperación: O(1) usando ID del R*-tree
-int id = res.second;  // R*-tree da el ID directamente
-const vector<double>& punto_original = datos[id];  // ¡Acceso directo!
-```
-
-**Comparación de rendimiento:**
-
-| Operación | V1 (hash_to_original) | V2 (vector + ID) |
-|-----------|----------------------|------------------|
-| **Recuperación** | O(N) búsqueda lineal | **O(1) acceso directo** |
-| **60,000 puntos** | 60,000 comparaciones | 1 acceso indexado |
-| **Comparación doubles** | Insegura (tolerancia 0.0001) | No necesaria |
-| **Memoria** | 2× (duplica hash+original) | 1× (solo originales) |
-| **Escalabilidad** | ❌ Empeora con N | ✅ Constante siempre |
-
-### ✅ **4. Estructura de datos genérica**
-
-```cpp
-// V1: tuple<double, double> (solo 2D)
-vector<tuple<double, double>> datos_2d;
-
-// V2: vector<double> (N dimensiones)
-vector<vector<double>> datos_nd = {
-    {1.0, 2.0, 3.0, 4.0, 5.0},     // 5D
-    {1.0, 2.0, ..., 128.0}         // 128D
-};
-```
-
 ## 🚀 Cómo ejecutar
 
 ### Requisitos
@@ -201,10 +109,10 @@ make clean && make
 ## 📂 Estructura del proyecto
 
 ```
-V_2/
-├── main.cpp           # Implementación N-dimensional optimizada
-├── R_star.h           # Interfaz del R*-tree
-├── R_star.cpp         # Implementación del R*-tree
+V_3/
+├── main.cpp           # Implementación K=10 con referencias al paper
+├── R_star.h           # Interfaz del R*-tree 10D
+├── R_star.cpp         # Implementación del R*-tree 10D
 ├── Makefile           # Sistema de compilación
 ├── README.md          # Este archivo
 ├── bin/               # Ejecutables (generado)
@@ -213,86 +121,105 @@ V_2/
 
 ## 🔍 Ejemplos de uso
 
-### Ejemplo 1: 2D → 2D (caso base)
+### Ejemplo 1: 20D → 10D (reducción real)
 
 ```cpp
-vector<vector<double>> datos_2d = {
-    {1.0, 1.0}, {2.0, 2.0}, {4.0, 2.0},
-    {5.0, 5.0}, {7.0, 8.0}
-};
-
-DBfsh indice_2d(2, 1, 1.5, 1, 42);  // dim=2, L=1, C=1.5, t=1, seed=42
-indice_2d.insertar(datos_2d);
-
-vector<double> query = {6.0, 6.0};
-vector<double> vecino = indice_2d.C_ANN(query, 1.5);
-```
-
-### Ejemplo 2: 5D → 2D
-
-```cpp
-vector<vector<double>> datos_5d = {
-    {1.0, 2.0, 3.0, 4.0, 5.0},
-    {2.0, 3.0, 4.0, 5.0, 6.0},
-    {5.0, 5.0, 5.0, 5.0, 5.0}
-};
-
-DBfsh indice_5d(5, 1, 1.5, 1, 123);  // 5 dimensiones
-indice_5d.insertar(datos_5d);
-
-vector<double> query_5d = {1.2, 2.1, 3.2, 4.1, 5.1};
-vector<double> vecino = indice_5d.C_ANN(query_5d, 1.5);
-```
-
-### Ejemplo 3: 10D → 2D
-
-```cpp
-// Generar puntos 10D
-vector<vector<double>> datos_10d;
-for(int i = 0; i < 100; i++) {
-    vector<double> punto(10);
-    for(int j = 0; j < 10; j++) {
-        punto[j] = rand() / double(RAND_MAX) * 100.0;
+vector<vector<double>> datos_20d;
+for(int i = 0; i < 8; i++) {
+    vector<double> punto(20);
+    for(int j = 0; j < 20; j++) {
+        punto[j] = (i + 1) * 0.5 + j * 0.1;
     }
-    datos_10d.push_back(punto);
+    datos_20d.push_back(punto);
 }
 
-DBfsh indice_10d(10, 1, 1.5, 1, 999);
-indice_10d.insertar(datos_10d);
+DBfsh indice_20d(20, 1, 1.5, 1, 42);  // dim=20, L=1, C=1.5, t=1
+indice_20d.insertar(datos_20d);
 
-vector<double> query_10d(10, 5.0);  // Query de 10 dimensiones
-vector<double> vecino = indice_10d.C_ANN(query_10d, 2.0);
+vector<double> query_20d(20);
+for(int j = 0; j < 20; j++) {
+    query_20d[j] = 1.5 + j * 0.1;
+}
+vector<double> vecino = indice_20d.C_ANN(query_20d, 1.5);
+```
+
+### Ejemplo 2: 50D → 10D
+
+```cpp
+vector<vector<double>> datos_50d;
+mt19937 gen(123);
+normal_distribution<double> dist(0.0, 1.0);
+
+for(int i = 0; i < 12; i++) {
+    vector<double> punto(50);
+    for(int j = 0; j < 50; j++) {
+        punto[j] = dist(gen) + i * 0.2;
+    }
+    datos_50d.push_back(punto);
+}
+
+DBfsh indice_50d(50, 1, 2.0, 1, 456);
+indice_50d.insertar(datos_50d);
+
+vector<double> query_50d = datos_50d[5];
+vector<double> vecino = indice_50d.C_ANN(query_50d, 2.0);
+```
+
+### Ejemplo 3: 128D → 10D (tipo SIFT)
+
+```cpp
+vector<vector<double>> datos_128d;
+mt19937 gen(789);
+uniform_real_distribution<double> dist(0.0, 255.0);
+
+for(int i = 0; i < 15; i++) {
+    vector<double> punto(128);
+    for(int j = 0; j < 128; j++) {
+        punto[j] = dist(gen);
+    }
+    datos_128d.push_back(punto);
+}
+
+DBfsh indice_128d(128, 1, 2.5, 1, 999);
+indice_128d.insertar(datos_128d);
+
+vector<double> query_128d = datos_128d[8];
+vector<double> vecino = indice_128d.C_ANN(query_128d, 2.5);
 ```
 
 ### Salida esperada
 
 ```
 DB-LSH inicializado:
-  Dimensión original: 5D
-  Dimensión proyectada: 2D (fijo para R*-tree)
+  Dimensión original: 50D
+  Dimensión proyectada: 10D (R*-tree 10D)
   Tablas hash: 1
-  C = 1.5, w0 = 9, t = 1
-  Semilla: 123
+  C = 2, w0 = 16, t = 1
+  Semilla: 456
 
-Insertando 5 puntos de 5D...
+Insertando 12 puntos de 50D...
 Proyecciones generadas (primeros 5):
-  Punto[0] 5D -> Hash: (6.36023, -3.26102)
-  Punto[1] 5D -> Hash: (8.06503, -3.85684)
+  Punto[0] 50D -> Hash 10D: [0.0107, 0.8406, 0.7435, ...]
+  Punto[1] 50D -> Hash 10D: [0.4698, -0.3523, 0.2097, ...]
   ...
 
-c-ANN Query
-Query 5D: [1.2, 2.1, 3.2, 4.1, 5.1]
+c-ANN Query (Algorithm 2)
+Query 50D: [1.449, 1.059, 0.037, ...]
 
 --- (r,c)-NN Query ---
-Ventana W(G(q), w_0·r = 9): [2.05, 11.05] x [-7.89, 1.11]
-  Puntos encontrados en ventana: 4
+Hash G(q) = [-1.199, 1.113, -1.271, 0.005, 0.631, ...]
+
+Tabla 1:
+  Window W(G(q), w=16):
+    [-9.199, 6.801] × ... × [-8.632, 7.368]
+  Puntos encontrados en ventana: 12
   Punto 1: id=0           👈 ¡Usa ID del R*-tree directamente!
-    dist(q, o) = 0.331662
-  ✓ Condición ||q,o|| ≤ cr cumplida
+    ||q, o|| = 12.536, cr = 2
+  ...
 
 RESULTADO:
-  Vecino encontrado 5D: [1, 2, 3, 4, 5]
-  Distancia euclidiana: 0.331662
+  Vecino encontrado 50D (primeras 5 dims): [-1.329, 1.131, 0.631, ...]
+  Distancia euclidiana: 13.825
 ```
 
 ## 🧪 Funcionamiento detallado de los algoritmos
@@ -361,35 +288,35 @@ Iter 2: r=1.5, w=13.5 → W(G(q), 13.5) → Encuentra punto a dist=1.41
 ## 📊 Parámetros del sistema
 
 | Parámetro | Descripción | Valor típico |
-|-----------|-------------|--------------|
-| **D** | Dimensión original | 2, 5, 10, 128, ... |
-| **K** | Dimensión proyectada (fijo) | 2 (para R*-tree 2D) |
-| **L** | Tablas hash | 1 (simplificado) |
-| **C** | Factor aproximación | 1.5 - 2.0 |
+|-----------|-------------|--------------||
+| **D** | Dimensión original | 20, 50, 128, 700, ... |
+| **K** | Dimensión proyectada (fijo) | **10** (para R*-tree 10D) |
+| **L** | Tablas hash | 1 (⏳ pendiente L>1) |
+| **C** | Factor aproximación | 1.5 - 3.0 |
 | **t** | Parámetro tolerancia | 1 |
 | **w₀** | Ancho ventana base | 4·C² = 9.0 (C=1.5) |
 | **seed** | Semilla aleatoria | Cualquier unsigned int |
 
 ## 🔧 Detalles de implementación
 
-### Clase DBfsh (V2)
+### Clase DBfsh (V3)
 
 ```cpp
 class DBfsh {
 private:
-    int D;                           // Dimensión original (configurable)
-    int K;                           // Dimensión hash (siempre 2)
-    int L;                           // Tablas hash
+    int D;                           // Dimensión original (20, 50, 128, 700, ...)
+    int K;                           // Dimensión hash (siempre 10)
+    int L;                           // Tablas hash (actualmente 1)
     double C, w0;                    // Parámetros LSH
     int t;                           // Tolerancia
     unsigned seed;                   // Semilla reproducible
     
-    vector<vector<double>> a;        // Matriz K×D de proyección
+    vector<vector<double>> a;        // Matriz K×D de proyección (10×D)
     vector<vector<double>> datos;    // Datos originales (índice = id)
-    RStarTreeIndex indice;           // R*-tree
+    RStarTreeIndex indice;           // R*-tree 10D
     
-    void generarFuncionesHash();     // Genera vectores N(0,1)
-    tuple<double,double> funcionHash(const vector<double>& punto);
+    void generarFuncionesHash();     // Genera 10 vectores N(0,1)
+    array<double,10> funcionHash(const vector<double>& punto);
     
 public:
     DBfsh(int dim, int L_, double C_, int t_, unsigned seed_ = 42);
@@ -399,17 +326,19 @@ public:
 };
 ```
 
-### Flujo de proyección N → 2D
+### Flujo de proyección N → 10D
 
 ```
-Punto original (N dimensiones)
+Punto original (N dimensiones: 20D, 50D, 128D, 700D, ...)
          ↓
     h₁ = a₁ · p = Σ(a₁[j] * p[j])  → escalar
     h₂ = a₂ · p = Σ(a₂[j] * p[j])  → escalar
+    ...
+    h₁₀ = a₁₀ · p = Σ(a₁₀[j] * p[j]) → escalar
          ↓
-   Hash 2D: (h₁, h₂)
+   Hash 10D: [h₁, h₂, ..., h₁₀]
          ↓
-    Insertar en R*-tree con ID
+    Insertar en R*-tree 10D con ID
 ```
 
 ### **Relación con el paper DB-LSH**
@@ -417,19 +346,24 @@ Punto original (N dimensiones)
 Este proyecto sigue fielmente el paper con estas correspondencias:
 
 | Concepto del paper | Implementación en código |
-|-------------------|--------------------------|
-| `G_i(q)` | `funcionHash(query)` → `(h₁, h₂)` |
-| `W(G_i(q), w₀·r)` | `windowQuery(x_min, y_min, x_max, y_max)` |
-| Buckets L | R*-tree único (simplificado L=1) |
+|-------------------|--------------------------||
+| `G_i(q)` | `funcionHash(query)` → `[h₁, h₂, ..., h₁₀]` |
+| `W(G_i(q), w₀·r)` | `windowQuery(mins, maxs)` con arrays 10D |
+| Buckets L | R*-tree único (⏳ pendiente L>1) |
 | Condición `cnt = 2tL+1` | Contador de candidatos inspeccionados |
-| Verificación `\|\|q,o\|\|` | `distanciaEuclidiana(query, punto_original)` |
+| Verificación `||q,o||` | `distanciaEuclidiana(query, punto_original)` |
 | Expansión `r ← cr` | Loop en `C_ANN` multiplicando r |
+| Ecuación (8) ventana | `[h_k(q) - w/2, h_k(q) + w/2]` para k=1..10 |
 
 ### **Extensiones más allá del paper**
 
 ✅ **N-dimensional**: El paper usa dimensión fija, aquí es configurable  
+✅ **K=10 proyecciones**: Mejor discriminación que K=2  
 ✅ **Vectores aleatorios**: Generados con `N(0,1)` normalizado (reproducible)  
-✅ **Optimización O(1)**: Mapeo ID→datos (no mencionado en paper, mejora práctica)
+✅ **Optimización O(1)**: Mapeo ID→datos (no mencionado en paper, mejora práctica)  
+✅ **Arrays para ventanas**: Interfaz limpia `windowQuery(mins, maxs)`  
+✅ **Comentarios del paper**: Código anotado con Algorithm 1/2 líneas  
+⏳ **Multi-L pendiente**: L>1 tablas hash independientes (siguiente versión)
 
 ```cpp
 // Optimización de implementación (no del paper)
@@ -451,28 +385,28 @@ const vector<double>& punto = datos[id];     // Acceso directo (O(1))
 
 ## 🎯 Mejoras futuras
 
-### Corto plazo (✅ = implementado en V2)
+### ⏳ **Pendiente prioritario (V4)**
+
+- ⬜ **Multi-L (L>1)**: Múltiples tablas hash independientes según paper
+  - Cada tabla con sus propias K funciones hash G_i
+  - Iteración sobre L índices R*-tree separados
+  - Mejora garantías probabilísticas del paper
+
+- ⬜ **Carga desde CSV**: Lector robusto para datasets reales
+  - Soporte para archivos grandes (60,000+ puntos, 700+ dimensiones)
+  - Parsing eficiente con `fstream`
+  - Validación de datos y manejo de errores
+  - Ejemplo: `datos = cargarCSV("dataset_700d.csv");`
+
+###  (✅ = implementado en V3)
 
 - ✅ **a aleatorios**: N(0,1) normalizados con semilla fija
 - ✅ **Separar datos**: Vector `datos` separado del índice (O(1) acceso)
 - ✅ **N-dimensional**: Soporta cualquier dimensión de entrada
-- ⬜ **Deduplicación de candidatos**: `unordered_set<int>` entre iteraciones
-- ⬜ **CSV (fstream)**: Lector robusto para datasets reales
+- ✅ **K=10 dimensiones**: Mejor discriminación que K=2
+- ✅ **Arrays ventanas**: `windowQuery(mins, maxs)` limpio
 - ⬜ **Métricas**: `recall@k`, `overall ratio`, #candidatos, tiempo
 
-### Medio plazo
-
-- ⬜ **k-ANN**: Con `priority_queue` (max-heap tamaño k)
-- ⬜ **Multi-L**: Múltiples tablas hash (L > 1)
-- ⬜ **Parámetros por CLI**: `--w0 --c --r0 --L --seed`
-- ⬜ **Tests unitarios**: Proyección, ventana, verificación
-
-### Largo plazo
-
-- ⬜ **Multi-probe**: Ventanas adyacentes priorizadas
-- ⬜ **Persistencia**: Guardar/cargar índice serializado
-- ⬜ **Batch queries**: Procesar múltiples queries eficientemente
-- ⬜ **Benchmarks**: SIFT-1M, GloVe-200, Deep1B
 
 ## 📈 Casos de uso
 
@@ -489,14 +423,17 @@ const vector<double>& punto = datos[id];     // Acceso directo (O(1))
 ### Configuración recomendada
 
 ```cpp
-// Para SIFT (128D → 2D)
-DBfsh sift_index(128, 1, 1.5, 1, 42);
+// Para SIFT (128D → 10D)
+DBfsh sift_index(128, 1, 2.5, 1, 42);
 
-// Para GloVe-200 (200D → 2D)
+// Para GloVe-200 (200D → 10D)
 DBfsh glove_index(200, 1, 2.0, 1, 999);
 
-// Para datos densos pequeños
-DBfsh small_index(10, 1, 1.2, 1, 123);
+// Para datasets 700D (alta dimensionalidad)
+DBfsh high_dim_index(700, 1, 3.0, 1, 123);
+
+// Para datos densos medianos
+DBfsh medium_index(50, 1, 1.5, 1, 456);
 ```
 
 ## 📖 Referencias y conceptos
@@ -547,7 +484,13 @@ Proyecto académico - Universidad XYZ
 
 ---
 
-**Autor**: Manuel J. Simpson  
-**Versión**: 2.0 (Optimizado N-dimensional)  
+**Autor**: Manuel J. Silva  
+**Versión**: 3.0 (K=10 dimensiones, preparado para L>1 y CSV)  
 **Fecha**: Noviembre 2025  
-**Tecnologías**: C++17, Boost.Geometry, R*-tree, LSH, STL
+**Tecnologías**: C++17, Boost.Geometry R*-tree 10D, LSH, STL
+
+**Estado actual:**
+- ✅ Implementación fiel al paper DB-LSH (Algorithm 1 y 2)
+- ✅ Soporte N-dimensional → 10D con K=10 funciones hash
+- ✅ Window queries 10D con arrays
+- ⏳ Pendiente: Multi-L (L>1) y carga CSV para datasets reales (700D+)
