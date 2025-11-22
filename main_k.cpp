@@ -19,7 +19,8 @@ class DBLSH {
         int L;      // Número de tablas hash
         double C;   // Constante de aproximación
         double w0;  // Ancho de ventana base
-        int t;      // Parámetro t (entero positivo)
+        double R_min; // Radio mínimo inicial
+        double beta; // Parámetro beta (proporción máxima de puntos a acceder)
         unsigned seed; // Semilla para reproducibilidad
         
         vector<RStarTreeIndex<K>> indices;
@@ -107,20 +108,22 @@ class DBLSH {
             return resultado;
         }
         
-        // Constructor con parámetros del paper DB-LSH
+        // Constructor con parámetros del paper DB-LSH (según código original)
         // D: dimensión original, L: número de tablas hash, C: approximation ratio
-        // t: parámetro para termination condition (cnt = 2tL+1)
-        // w0 = 4C² según sugerencia del paper para (1,c,p1,p2)-sensitive hash family
-        DBLSH(int dim, int L_, double C_, int t_, unsigned seed_ = 42) 
-            : D(dim), L(L_), C(C_), w0(4*C_*C_), t(t_), seed(seed_) {
+        // R_min: radio inicial mínimo, beta: proporción máxima de accesos (0-1)
+        // w0 = R_min * 4C² según código original del paper
+        DBLSH(int dim, int L_, double C_, double R_min_, double beta_, unsigned seed_ = 42) 
+            : D(dim), L(L_), C(C_), R_min(R_min_), beta(beta_), seed(seed_) {
+            w0 = R_min * 4.0 * C * C;  // Fórmula del código original
             indices.resize(L);
             generarFuncionesHash();
             
-            cout << "DB-LSH inicializado:" << endl;
+            cout << "DB-LSH inicializado (según implementación original):" << endl;
             cout << "  Dimensión original: " << D << "D" << endl;
             cout << "  Dimensión proyectada: " << K << "D (R*-tree " << K << "D)" << endl;
             cout << "  Tablas hash: " << L << endl;
-            cout << "  C = " << C << ", w0 = " << w0 << ", t = " << t << endl;
+            cout << "  C = " << C << ", R_min = " << R_min << ", beta = " << beta << endl;
+            cout << "  w0 = " << w0 << " (R_min * 4C²)" << endl;
             cout << "  Semilla: " << seed << endl;
         }
 
@@ -169,9 +172,9 @@ class DBLSH {
         
         
         // Algorithm 1 (modificado): (r,c)-NN Query para k vecinos
-        // Input: q (query point), r (query radius), c (approximation ratio), t (positive integer), k (num neighbors)
+        // Input: q (query point), r (query radius), c (approximation ratio), k (num neighbors), T (límite de accesos)
         // Output: Lista de hasta k puntos con {id, punto, distancia}
-        vector<tuple<int, vector<double>, double>> RC_NN_K(const vector<double>& query, double r, double c, int k){
+        vector<tuple<int, vector<double>, double>> RC_NN_K(const vector<double>& query, double r, double c, int k, int T){
             vector<tuple<int, vector<double>, double>> candidatos; // {id, punto, distancia}
             set<int> ids_visitados; // Evitar duplicados entre tablas
             int cnt = 0;
@@ -209,8 +212,8 @@ class DBLSH {
                         }
                     }
                     
-                    // Terminación por límite de accesos
-                    if(cnt >= 2*t*L + 1) {
+                    // Terminación por límite de accesos T (según código original)
+                    if(cnt >= T) {
                         return candidatos;
                     }
                 }
@@ -218,20 +221,42 @@ class DBLSH {
             return candidatos;
         }
         
-        // Algorithm 2 (modificado): c-ANN Query para k vecinos
+        // Algorithm 2 (modificado según código original): c-ANN Query para k vecinos
         // Input: q (query point), c (approximation ratio), k (num neighbors)
         // Output: Lista de k puntos con {id, punto, distancia}
         vector<tuple<int, vector<double>, double>> C_ANN_K(const vector<double>& query, double c, int k){
-            // Estimación inicial de radio basada en magnitud promedio del dataset
-            // Para Fashion-MNIST (784D, valores 0-255), distancias típicas ~1000-2000
-            double r = 100.0; // Radio inicial más realista
+            // Calcular parámetro t adaptativo según tamaño N (código original)
+            int N = datos.size();
+            double t = 1.0;
+            if (N < 70000) {
+                t = 200.0;
+            } else if (N >= 70000 && N < 500000) {
+                t = 1000.0;
+            } else if (N >= 500000 && N < 2000000) {
+                t = 2000.0;
+            } else if (N >= 2000000 && N < 2000000000) {
+                t = 20000.0;
+            } else {
+                t = 20000.0;
+            }
+            t *= 2.0;
+            
+            // Límite T según código original: beta * N + k (en lugar de 2tL+1)
+            int T = static_cast<int>(beta * N) + k;
+            
+            // Radio inicial desde R_min (código original)
+            double init_w = w0;  // w0 ya calculado como R_min * 4C²
             
             // Acumular candidatos entre iteraciones con IDs
             vector<tuple<int, vector<double>, double>> acumulados;
             set<int> ids_usados; // Para evitar duplicados usando IDs reales
             
-            while(true){
-                auto nuevos = RC_NN_K(query, r, c, k);
+            int rounds = 0;
+            const int MAX_ROUNDS = 30;  // Límite de 30 rondas (código original)
+            
+            while(rounds < MAX_ROUNDS){
+                rounds++;
+                auto nuevos = RC_NN_K(query, init_w / (w0), c, k, T);  // r = init_w/w0
                 
                 // Agregar nuevos candidatos evitando duplicados
                 for(const auto& candidato : nuevos) {
@@ -252,16 +277,14 @@ class DBLSH {
                     return acumulados;
                 }
                 
-                // Expandir radio para siguiente iteración
-                r = c * r;
-                
-                if(r > 100000.0) {
-                    // Retornar lo que tengamos acumulado
-                    sort(acumulados.begin(), acumulados.end(),
-                         [](const auto& a, const auto& b) { return get<2>(a) < get<2>(b); });
-                    return acumulados;
-                }
+                // Expandir ventana w para siguiente iteración (código original)
+                init_w *= c;
             }
+            
+            // Si no se encontraron k vecinos después de MAX_ROUNDS, retornar lo acumulado
+            sort(acumulados.begin(), acumulados.end(),
+                 [](const auto& a, const auto& b) { return get<2>(a) < get<2>(b); });
+            return acumulados;
         }
 
 
@@ -375,12 +398,14 @@ int main(){
     cout << "============================================================" << endl;
 
     cout << "Cargando Fashion-MNIST...\n";
-    vector<vector<double>> full_dataset = loadDataset("fashion_mnist.csv", 10000);
+    vector<vector<double>> full_dataset = loadDataset("fashion_mnist.csv", 60000);
     cout << "Filas cargadas: " << full_dataset.size() << endl;
 
     // Separar queries del dataset de indexación
     const int K_QUERIES = 50;
     const double C = 1.5;
+    const double R_MIN = 0.3;  // Radio inicial mínimo (parámetro típico del paper)
+    const double BETA = 0.1;   // Proporción máxima de accesos (10% del dataset)
     
     // Shuffle dataset
     mt19937 gen(42);
@@ -401,8 +426,8 @@ int main(){
     cout << "Queries: " << queries.size() << endl;
     cout << "Dataset indexado: " << dataset_index.size() << endl;
 
-    // Construir índice DB-LSH
-    DBLSH<10> indice(784, 5, C, 4, 42);
+    // Construir índice DB-LSH (con parámetros del código original)
+    DBLSH<10> indice(784, 5, C, R_MIN, BETA, 42); // D=784, L=5 , C=1.5, R_min=0.3, beta=0.1, seed=42 
     indice.insertar(dataset_index);
     indice.imprimir();
 
