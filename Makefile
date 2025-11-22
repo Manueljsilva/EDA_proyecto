@@ -10,11 +10,14 @@ BIN_DIR = bin
 
 # Archivos
 TARGET = $(BIN_DIR)/main
-SOURCES = main.cpp R_star.cpp
+TARGET_K = $(BIN_DIR)/main_k
+SOURCES = main.cpp
+SOURCES_K = main_k.cpp
 OBJECTS = $(SOURCES:%.cpp=$(OBJ_DIR)/%.o)
+OBJECTS_K = $(SOURCES_K:%.cpp=$(OBJ_DIR)/%.o)
 
 # Regla por defecto
-all: directories $(TARGET)
+all: directories $(TARGET) $(TARGET_K)
 
 # Crear directorios necesarios
 directories:
@@ -24,6 +27,10 @@ directories:
 $(TARGET): $(OBJECTS)
 	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
 
+# Compilar ejecutable para k queries
+$(TARGET_K): $(OBJECTS_K)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LIBS)
+
 # Compilar archivos objeto
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
@@ -31,6 +38,10 @@ $(OBJ_DIR)/%.o: $(SRC_DIR)/%.cpp
 # Ejecutar el programa
 run: all
 	./$(TARGET)
+
+# Ejecutar con k queries
+run-k: all
+	./$(TARGET_K)
 
 # Limpiar archivos compilados
 clean:
