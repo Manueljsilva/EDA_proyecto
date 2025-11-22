@@ -23,6 +23,33 @@ void RStarTreeIndex::insertPrueba(int id , array<double,10> data) {
     total_elements_++;
 }
 
+// Bulk-loading: construye el R*-tree de una sola vez (más eficiente según paper DB-LSH)
+void RStarTreeIndex::bulkLoad(const vector<pair<array<double,10>, int>>& data) {
+    // Convertir array<double,10> a Points de Boost.Geometry
+    vector<Value> values;
+    values.reserve(data.size());
+    
+    for(const auto& [hash_array, id] : data) {
+        Point p;
+        bg::set<0>(p, hash_array[0]);
+        bg::set<1>(p, hash_array[1]);
+        bg::set<2>(p, hash_array[2]);
+        bg::set<3>(p, hash_array[3]);
+        bg::set<4>(p, hash_array[4]);
+        bg::set<5>(p, hash_array[5]);
+        bg::set<6>(p, hash_array[6]);
+        bg::set<7>(p, hash_array[7]);
+        bg::set<8>(p, hash_array[8]);
+        bg::set<9>(p, hash_array[9]);
+        values.push_back(make_pair(p, id));
+    }
+    
+    // Reconstruir R*-tree usando bulk-loading (mucho más eficiente)
+    rtree_.clear();
+    rtree_ = bgi::rtree<Value, bgi::rstar<16>>(values.begin(), values.end());
+    total_elements_ = static_cast<int>(values.size());
+}
+
 
 bool RStarTreeIndex::loadPrueba(vector<array<double,10>>  filepath) {
     int id = 1 ;

@@ -27,6 +27,10 @@ public:
     RStarTreeIndex();
 
     void insertPrueba(int id , array<double,10> data);
+    
+    // Bulk-loading: construcción eficiente del R*-tree (según paper DB-LSH)
+    void bulkLoad(const vector<pair<array<double,10>, int>>& data);
+    
     bool loadPrueba(vector<array<double,10>> filepath);
 
     // Window Query: buscar puntos dentro de un hiper-rectángulo 10D

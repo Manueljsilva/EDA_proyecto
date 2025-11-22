@@ -27,7 +27,7 @@ class DBfsh{
         // a[i][j] = coeficiente de la función hash i para la dimensión j
         vector<vector<double>> a;
 
-        // Generar funciones hash aleatorias normalizadas
+        // Generar funciones hash aleatorias
         void generarFuncionesHash() {
             a.resize(K);
             mt19937 gen(seed);
@@ -35,18 +35,10 @@ class DBfsh{
             
             for(int i = 0; i < K; i++) {
                 a[i].resize(D);
-                double norm = 0.0;
                 
                 // Generar vector aleatorio N(0,1)
                 for(int j = 0; j < D; j++) {
                     a[i][j] = dist(gen);
-                    norm += a[i][j] * a[i][j];
-                }
-                
-                // Normalizar ||a[i]|| = 1
-                norm = sqrt(norm);
-                for(int j = 0; j < D; j++) {
-                    a[i][j] /= norm;
                 }
             }
         }
@@ -102,14 +94,21 @@ class DBfsh{
             // Guardar datos originales
             datos = datos_input;
             
-            cout << "\nInsertando " << datos.size() << " puntos de " << D << "D..." << endl;
+            cout << "\nIndexando " << datos.size() << " puntos de " << D << "D..." << endl;
+            cout << "Usando bulk-loading (paper DB-LSH)" << endl;
             
-            // Proyectar y guardar en R*-tree con ID = índice del vector
+            // Proyectar TODOS los puntos primero (preparación para bulk-loading)
+            vector<pair<array<double,10>, int>> proyecciones;
+            proyecciones.reserve(datos.size());
+            
             for (size_t i = 0; i < datos.size(); i++){
                 array<double,10> hash_punto = funcionHash(datos[i]);
                 int id = static_cast<int>(i);  // ID = índice en vector datos
-                indice.insertPrueba(id, hash_punto);
+                proyecciones.push_back({hash_punto, id});
             }
+            
+            // Bulk-loading: construir R*-tree de una sola vez (más eficiente)
+            indice.bulkLoad(proyecciones);
             
             cout << "Proyecciones generadas (primeros 5):" << endl;
             for (size_t i = 0; i < min((size_t)5, datos.size()); i++) {
