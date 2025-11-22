@@ -114,9 +114,9 @@ class DBLSH {
                     array<double, K> hash_punto = funcionHash(datos[j], i);
                     int id = static_cast<int>(j);  // ID = índice en vector datos
                     proyecciones[i].push_back({hash_punto, id});
-                    indices[i].insertPrueba(id, hash_punto);
+                    //indices[i].insertPrueba(id, hash_punto);
                 }
-                // Bulk-loading: construir R*-tree de una sola vez (más eficiente)
+                // Bulk-loading: construir R*-tree de una sola vez (más eficiente según paper DB-LSH)
                 indices[i].bulkLoad(proyecciones[i]);
             }
                         

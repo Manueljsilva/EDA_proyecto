@@ -103,6 +103,7 @@ public:
     void printStats() const {
         cout << "  Estadísticas del R*-tree:" << endl;
         cout << "   Total de elementos: " << total_elements_ << endl;
+        cout << "   Dimensiones: " << Dim << "D" << endl;
         cout << "   Parámetro R*: 16 (max elementos por nodo)" << endl;
     }
 };
