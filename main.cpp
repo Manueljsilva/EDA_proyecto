@@ -1,61 +1,67 @@
 #include <iostream>
 #include <fstream>
-#include "R_star.h"
+#include <sstream>
+#include "R_star2.h"
 #include <vector>
 #include <tuple>
 #include <cmath>
 #include <algorithm>
 #include <random>
+#include <filesystem>
+
 using namespace std;
 // clase  
-class DBfsh{
+template <size_t K> // Número de funciones hash = dimensión proyectada (ahora K=10)
+class DBLSH {
     private:
         int D;      // Dimensión original (ej: 2, 10, 128, 700)
-        int K;      // Número de funciones hash = dimensión proyectada (ahora K=10)
         int L;      // Número de tablas hash
         double C;   // Constante de aproximación
         double w0;  // Ancho de ventana base
         int t;      // Parámetro t (entero positivo)
         unsigned seed; // Semilla para reproducibilidad
         
-        RStarTreeIndex indice;
+        vector<RStarTreeIndex<K>> indices;
         
         // Almacena los puntos originales (índice del vector = id del punto)
         vector<vector<double>> datos;
 
         // Matriz de proyección: K filas × D columnas
         // a[i][j] = coeficiente de la función hash i para la dimensión j
-        vector<vector<double>> a;
+        vector<vector<vector<double>>> a;
 
         // Generar funciones hash aleatorias
         void generarFuncionesHash() {
-            a.resize(K);
+            a.resize(L);
             mt19937 gen(seed);
             normal_distribution<double> dist(0.0, 1.0);
-            
-            for(int i = 0; i < K; i++) {
-                a[i].resize(D);
+            for(int i = 0; i < L; i++) {
+                a[i].resize(K);
                 
-                // Generar vector aleatorio N(0,1)
-                for(int j = 0; j < D; j++) {
-                    a[i][j] = dist(gen);
+                for(size_t j = 0; j < K; j++) {
+                    a[i][j].resize(D);
+                    
+                    // Generar vector aleatorio N(0,1)
+                    for(int k = 0; k < D; k++) {
+                        a[i][j][k] = dist(gen);
+                    }
                 }
             }
         }
         
         // Proyectar punto N-dimensional → K-dimensional (K=10)
-        array<double,10> funcionHash(const vector<double>& punto) {
-            if(punto.size() != D) {
+        array<double, K> funcionHash(const vector<double>& punto, int tabla) {
+            if(static_cast<int>(punto.size()) != D) {
                 throw runtime_error("Punto debe tener " + to_string(D) + " dimensiones");
             }
             
-            array<double,10> hash_result;
+            array<double, K> hash_result;
             
             // h_i(p) = a[i] · p (producto punto) para cada función hash
-            for(int i = 0; i < K; i++) {
+            for(size_t i = 0; i < K; i++) {
                 hash_result[i] = 0.0;
                 for(int j = 0; j < D; j++) {
-                    hash_result[i] += a[i][j] * punto[j];
+                    hash_result[i] += a[tabla][i][j] * punto[j];
                 }
             }
             
@@ -78,13 +84,14 @@ class DBfsh{
         // D: dimensión original, L: número de tablas hash, C: approximation ratio
         // t: parámetro para termination condition (cnt = 2tL+1)
         // w0 = 4C² según sugerencia del paper para (1,c,p1,p2)-sensitive hash family
-        DBfsh(int dim, int L_, double C_, int t_, unsigned seed_ = 42) 
-            : D(dim), K(10), L(L_), C(C_), w0(4*C_*C_), t(t_), seed(seed_) {
+        DBLSH(int dim, int L_, double C_, int t_, unsigned seed_ = 42) 
+            : D(dim), L(L_), C(C_), w0(4*C_*C_), t(t_), seed(seed_) {
+            indices.resize(L);
             generarFuncionesHash();
             
             cout << "DB-LSH inicializado:" << endl;
             cout << "  Dimensión original: " << D << "D" << endl;
-            cout << "  Dimensión proyectada: " << K << "D (R*-tree 10D)" << endl;
+            cout << "  Dimensión proyectada: " << K << "D (R*-tree " << K << "D)" << endl;
             cout << "  Tablas hash: " << L << endl;
             cout << "  C = " << C << ", w0 = " << w0 << ", t = " << t << endl;
             cout << "  Semilla: " << seed << endl;
@@ -98,23 +105,26 @@ class DBfsh{
             cout << "Usando bulk-loading (paper DB-LSH)" << endl;
             
             // Proyectar TODOS los puntos primero (preparación para bulk-loading)
-            vector<pair<array<double,10>, int>> proyecciones;
-            proyecciones.reserve(datos.size());
-            
-            for (size_t i = 0; i < datos.size(); i++){
-                array<double,10> hash_punto = funcionHash(datos[i]);
-                int id = static_cast<int>(i);  // ID = índice en vector datos
-                proyecciones.push_back({hash_punto, id});
+            vector<vector<pair<array<double, K>, int>>> proyecciones;
+            proyecciones.resize(L);
+            // Proyectar y guardar en R*-tree con ID = índice del vector
+            for(int i = 0; i < L; i++) {
+                proyecciones[i].reserve(datos.size());
+                for (size_t j = 0; j < datos.size(); j++){
+                    array<double, K> hash_punto = funcionHash(datos[j], i);
+                    int id = static_cast<int>(j);  // ID = índice en vector datos
+                    proyecciones[i].push_back({hash_punto, id});
+                    indices[i].insertPrueba(id, hash_punto);
+                }
+                // Bulk-loading: construir R*-tree de una sola vez (más eficiente)
+                indices[i].bulkLoad(proyecciones[i]);
             }
-            
-            // Bulk-loading: construir R*-tree de una sola vez (más eficiente)
-            indice.bulkLoad(proyecciones);
-            
+                        
             cout << "Proyecciones generadas (primeros 5):" << endl;
             for (size_t i = 0; i < min((size_t)5, datos.size()); i++) {
-                auto hash = funcionHash(datos[i]);
-                cout << "  Punto[" << i << "] " << D << "D -> Hash 10D: [";
-                for(int k = 0; k < K; k++) {
+                auto hash = funcionHash(datos[i], 0);
+                cout << "  Punto[" << i << "] " << D << "D -> Hash "<< K << "D: [";
+                for(size_t k = 0; k < K; k++) {
                     cout << hash[k];
                     if(k < K-1) cout << ", ";
                 }
@@ -126,7 +136,9 @@ class DBfsh{
             cout << endl;
         }
         void imprimir(){
-            indice.printStats();
+            for(int i = 0; i < L; i++) {
+                indices[i].printStats();
+            }
         }
         
         
@@ -146,19 +158,19 @@ class DBfsh{
             cout << "]" << endl;
             cout << "r = " << r << ", c = " << c << ", t = " << t << ", L = " << L << endl;
             
-            // Compute G_i(q) (Algorithm 1, line 3)
-            // G(q) = (h_1(q), h_2(q), ..., h_K(q)) proyección K-dimensional
-            array<double,10> hash_query = funcionHash(query);
-            cout << "Hash G(q) = [";
-            for(int k = 0; k < K; k++) {
-                cout << hash_query[k];
-                if(k < K-1) cout << ", ";
-            }
-            cout << "]" << endl;
-            
             // Para cada tabla i = 1 to L (Algorithm 1, line 2)
             for(int i = 0; i < L; i++){
                 cout << "\nTabla " << (i+1) << ":" << endl;
+                
+                // Compute G_i(q) (Algorithm 1, line 3)
+                // G(q) = (h_1(q), h_2(q), ..., h_K(q)) proyección K-dimensional
+                array<double, K> hash_query = funcionHash(query, i);
+                cout << "Hash G(q) = [";
+                for(size_t k = 0; k < K; k++) {
+                    cout << hash_query[k];
+                    if(k < K-1) cout << ", ";
+                }
+                cout << "]" << endl;
                 
                 // Window query W(G_i(q), w_0·r) (Algorithm 1, line 4)
                 // Ecuación (8): W(G(q), w) = [h_1(q) - w/2, h_1(q) + w/2] × ... × [h_K(q) - w/2, h_K(q) + w/2]
@@ -166,17 +178,17 @@ class DBfsh{
                 double threshold = w_r / 2.0;  // w/2 para cada dimensión
                 
                 // Construir hiper-rectángulo K-dimensional
-                array<double,10> mins, maxs;
-                for(int k = 0; k < K; k++) {
+                array<double, K> mins, maxs;
+                for(size_t k = 0; k < K; k++) {
                     mins[k] = hash_query[k] - threshold;  // h_k(q) - w/2
                     maxs[k] = hash_query[k] + threshold;  // h_k(q) + w/2
                 }
                 
                 cout << "  Window W(G(q), w=" << w_r << "):" << endl;
-                cout << "    [" << mins[0] << ", " << maxs[0] << "] × ... × [" << mins[9] << ", " << maxs[9] << "]" << endl;
+                cout << "    [" << mins[0] << ", " << maxs[0] << "] × ... × [" << mins[K - 1] << ", " << maxs[K - 1] << "]" << endl;
                 
                 // Window Query en el R*-tree 10D (ahora con arrays)
-                vector<RStarTreeIndex::Value> resultados = indice.windowQuery(mins, maxs);
+                vector<typename RStarTreeIndex<K>::Value> resultados = indices[i].windowQuery(mins, maxs);
                 cout << "  Puntos encontrados en ventana: " << resultados.size() << endl;
                 
                 // Procesar cada punto encontrado (Algorithm 1, line 4-7)
@@ -262,12 +274,73 @@ class DBfsh{
 
 };
 
+vector<vector<double>> loadDataset(const string& path, size_t max_rows = 5000) {
+    ifstream f(path);
+    if (!f) throw runtime_error("No se pudo abrir " + path);
 
+    string line;
+    getline(f, line); // header
+    vector<vector<double>> datos;
+    datos.reserve(max_rows);
+
+    while (getline(f, line) && datos.size() < max_rows) {
+        stringstream ss(line);
+        string cell;
+
+        // salta label
+        if (!getline(ss, cell, ',')) continue;
+
+        vector<double> row;
+        row.reserve(784);
+        while (getline(ss, cell, ',')) {
+            row.push_back(stod(cell));
+        }
+        if (row.size() == 784) datos.push_back(move(row));
+    }
+    return datos;
+}
+
+void guardarPGM(const vector<double>& v, const string& path) {
+    if (v.size() != 784) throw runtime_error("Esperaba 784 valores");
+    ofstream out(path, ios::binary);
+    if (!out) throw runtime_error("No pude abrir " + path);
+    out << "P2\n28 28\n255\n"; // formato ASCII PGM
+    for (size_t i = 0; i < v.size(); ++i) {
+        int val = static_cast<int>(round(clamp(v[i], 0.0, 255.0)));
+        out << val << (i % 28 == 27 ? "\n" : " ");
+    }
+}
 
 int main(){
+    std::filesystem::create_directories("results");
+
     cout << "============================================================" << endl;
     cout << "DB-LSH Dinámico: Reducción de Dimensionalidad N-D → 10D" << endl;
     cout << "============================================================" << endl;
+
+    cout << "Cargando Fashion-MNIST...\n";
+    vector<vector<double>> datos = loadDataset("fashion_mnist.csv", 10000);
+
+    cout << "Filas cargadas: " << datos.size() << endl;
+
+    // <K>, D, L, C, T, seed
+    DBLSH<10> indice(784, 5, 2.0, 1, 42);
+    indice.insertar(datos);
+    indice.imprimir();
+
+    // Query: usa la primera imagen como ejemplo con un poco de ruido
+    vector<double> query = datos.front();
+    for (double& v : query) v += 0.05; // pequeño ruido
+
+    guardarPGM(query, "results/query.pgm");
+
+    auto vecino = indice.C_ANN(query, 2.0);
+    // imprime primeras dimensiones
+    guardarPGM(vecino, "results/result.pgm");
+
+    return 0;
+
+    /*
     
     // ============= EJEMPLO 1: 20D → 10D =============
     cout << "\n### EJEMPLO 1: Datos 20D → Hash 10D (reducción 20→10) ###\n" << endl;
@@ -438,4 +511,6 @@ int main(){
     cout << "💡 Preparado para datasets reales de alta dimensionalidad (SIFT, GloVe, etc.)" << endl;
 
     return 0;
+
+    */
 }
