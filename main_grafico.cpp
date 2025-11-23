@@ -170,11 +170,11 @@ class DBLSH {
             vector<tuple<int, vector<double>, double>> acumulados;
             set<int> ids_usados;
             
-            int rounds = 0;
+            // int rounds = 0;
             // const int MAX_ROUNDS = 30;
             
             while(true) {
-                rounds++;
+                // rounds++;
                 auto nuevos = RC_NN_K(query, r, c, k, T);
                 
                 for(const auto& candidato : nuevos) {
