@@ -270,11 +270,10 @@ double calcularRecallKNN(const vector<tuple<int, vector<double>, double>>& vecin
     return (double)interseccion / k;
 }
 
-#define D 784
-#define C 1.2
-#define t 3000
-#define K 73
-#define L 2
+#define MAIN_C 1.5
+#define MAIN_t 8000
+#define MAIN_K 83
+#define MAIN_L 2
 
 int main(){
     std::filesystem::create_directories("results");
@@ -284,6 +283,11 @@ int main(){
     cout << "Variando n (proporción del dataset)" << endl;
     cout << "============================================================" << endl;
 
+    const int D = 784;
+    const double C = MAIN_C;
+    const int t = MAIN_t;
+    const int K = MAIN_K;
+    const int L = MAIN_L;
     const int K_QUERIES = 50;  // Número de queries para promediar
     const int K_NN = 50;       // k vecinos a buscar
     const double R_MIN = 1;
