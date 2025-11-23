@@ -23,7 +23,7 @@ class DBLSH {
         double C;
         double w0;
         double R_min;
-        double beta;
+        double t;
         unsigned seed;
         
         vector<RStarTreeIndex<K>> indices;
@@ -91,8 +91,8 @@ class DBLSH {
             return resultado;
         }
         
-        DBLSH(int dim, int L_, double C_, double R_min_, double beta_, unsigned seed_ = 42) 
-            : D(dim), L(L_), C(C_), R_min(R_min_), beta(beta_), seed(seed_) {
+        DBLSH(int dim, int L_, double C_, double R_min_, double t_, unsigned seed_ = 42) 
+            : D(dim), L(L_), C(C_), R_min(R_min_), t(t_), seed(seed_) {
             w0 = R_min * 4.0 * C * C;
             indices.resize(L);
             generarFuncionesHash();
@@ -157,26 +157,25 @@ class DBLSH {
         }
         
         vector<tuple<int, vector<double>, double>> C_ANN_K(const vector<double>& query, double c, int k){
-            int N = datos.size();
-            double t = 1.0;
-            if (N < 70000) t = 200.0;
-            else if (N < 500000) t = 1000.0;
-            else if (N < 2000000) t = 2000.0;
-            else t = 20000.0;
-            t *= 2.0;
+            //double t = 1.0;
+            // if (N < 70000) t = 200.0;
+            // else if (N < 500000) t = 1000.0;
+            // else if (N < 2000000) t = 2000.0;
+            // else t = 20000.0;
+            // t *= 2.0;
             
-            int T = static_cast<int>(beta * N) + k;
-            double init_w = w0;
+            int T = 2*t*L + k;
+            double r = R_min;
             
             vector<tuple<int, vector<double>, double>> acumulados;
             set<int> ids_usados;
             
             int rounds = 0;
-            const int MAX_ROUNDS = 30;
+            // const int MAX_ROUNDS = 30;
             
-            while(rounds < MAX_ROUNDS){
+            while(true) {
                 rounds++;
-                auto nuevos = RC_NN_K(query, init_w / (w0), c, k, T);
+                auto nuevos = RC_NN_K(query, r, c, k, T);
                 
                 for(const auto& candidato : nuevos) {
                     int id = get<0>(candidato);
@@ -193,7 +192,7 @@ class DBLSH {
                     return acumulados;
                 }
                 
-                init_w *= c;
+                r *= c;
             }
             
             sort(acumulados.begin(), acumulados.end(),
@@ -271,6 +270,12 @@ double calcularRecallKNN(const vector<tuple<int, vector<double>, double>>& vecin
     return (double)interseccion / k;
 }
 
+#define D 784
+#define C 1.2
+#define t 3000
+#define K 73
+#define L 2
+
 int main(){
     std::filesystem::create_directories("results");
 
@@ -281,9 +286,7 @@ int main(){
 
     const int K_QUERIES = 50;  // Número de queries para promediar
     const int K_NN = 50;       // k vecinos a buscar
-    const double C = 1.5;
-    const double R_MIN = 0.3;
-    const double BETA = 0.1;
+    const double R_MIN = 1;
 
     // Cargar dataset completo (60k)
     cout << "Cargando Fashion-MNIST completo...\n";
@@ -313,7 +316,7 @@ int main(){
     cout << "\nParámetros fijos:" << endl;
     cout << "  K (k-NN) = " << K_NN << endl;
     cout << "  Queries = " << K_QUERIES << endl;
-    cout << "  C = " << C << ", R_min = " << R_MIN << ", beta = " << BETA << endl;
+    cout << "  C = " << C << ", R_min = " << R_MIN << ", t = " << t << endl;
     cout << "\nProbando n = {0.2, 0.4, 0.6, 0.8, 1.0}" << endl;
     cout << string(70, '-') << endl;
     
@@ -331,7 +334,7 @@ int main(){
         
         // Construir índice DB-LSH
         cout << "  Construyendo índice DB-LSH..." << flush;
-        DBLSH<10> indice(784, 5, C, R_MIN, BETA, 42);
+        DBLSH<K> indice(D, L, C, R_MIN, t, 42);
         indice.insertar(dataset_index);
         cout << " OK" << endl;
         
