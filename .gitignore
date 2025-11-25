@@ -1,5 +1,19 @@
-.vscode
-bin
-obj
-results
+# VSCode settings
+.vscode/
+
+# Build artifacts
+bin/
+obj/
+
+# Results folder
+results/
+
+# Ignore venv
+.venv/
+venv/
+
+# Ignore all CSV files
 *.csv
+
+# EXCEPTIONS: track a specific CSV if needed
+# !nombre_del_csv.csv
